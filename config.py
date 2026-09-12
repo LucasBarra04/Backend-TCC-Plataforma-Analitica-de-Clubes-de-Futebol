@@ -8,6 +8,7 @@ load_dotenv()
 sheetsApiUrl: str = os.getenv("SHEETS_API_URL")
 sheetsApiTimeout: float = float(os.getenv("SHEETS_API_TIMEOUT", "15"))
 sheetsApiMaxRetries: int = int(os.getenv("SHEETS_API_MAX_RETRIES", "3"))
+sheetsCacheTtlSegundos: int = int(os.getenv("SHEETS_CACHE_TTL_SEGUNDOS", "180"))
 
 clubesValidos: list[str] = ["flamengo", "palmeiras", "internacional", "sao_paulo"]
 

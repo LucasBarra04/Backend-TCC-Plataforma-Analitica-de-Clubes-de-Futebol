@@ -1,7 +1,7 @@
 # Teste de associação estatística entre financeiro e desempenho.
 
 from typing import Callable, Optional
-
+from concurrent.futures import ThreadPoolExecutor
 from scipy import stats as scipyStats
 
 from config import anosRecorte

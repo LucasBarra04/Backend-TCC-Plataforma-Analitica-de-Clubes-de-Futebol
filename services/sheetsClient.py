@@ -1,14 +1,14 @@
-# Cliente HTTP para a API do Google Apps Script.
+# Cliente HTTP para a API
 
-# Único ponto do backend que utiliza `requests` contra a API da planilha.
-# Encapsula as chamadas GET e gerencia timeouts, erros de rede e o envelope { success, data | error }.
-
+import json
+import threading
+import time
 from typing import Any, Optional
 
 import requests
 from fastapi import HTTPException
 
-from config import sheetsApiMaxRetries, sheetsApiTimeout, sheetsApiUrl
+from config import sheetsApiMaxRetries, sheetsApiTimeout, sheetsApiUrl, sheetsCacheTtlSegundos
 
 
 class SheetsAPIError(Exception):
@@ -19,7 +19,49 @@ class SheetsAPIError(Exception):
         super().__init__(message)
 
 
+_cache: dict[str, tuple[float, dict]] = {}
+_locksPorChave: dict[str, threading.Lock] = {}
+_locksGuard = threading.Lock()
+
+
+def _lockDaChave(chave: str) -> threading.Lock:
+    with _locksGuard:
+        lock = _locksPorChave.get(chave)
+        if lock is None:
+            lock = threading.Lock()
+            _locksPorChave[chave] = lock
+        return lock
+
+
+def _chaveCache(params: dict[str, Any]) -> str:
+    limpos = {k: v for k, v in params.items() if v is not None}
+    return json.dumps(limpos, sort_keys=True)
+
+
+def limparCache() -> None:
+    with _locksGuard:
+        _cache.clear()
+        _locksPorChave.clear()
+
+
 def _get(params: dict[str, Any]) -> dict:
+    chave = _chaveCache(params)
+
+    entrada = _cache.get(chave)
+    if entrada is not None and (time.monotonic() - entrada[0]) < sheetsCacheTtlSegundos:
+        return entrada[1]
+
+    with _lockDaChave(chave):
+        entrada = _cache.get(chave)
+        if entrada is not None and (time.monotonic() - entrada[0]) < sheetsCacheTtlSegundos:
+            return entrada[1]
+
+        dados = _buscarNaApi(params)
+        _cache[chave] = (time.monotonic(), dados)
+        return dados
+
+
+def _buscarNaApi(params: dict[str, Any]) -> dict:
     parametrosLimpos = {k: v for k, v in params.items() if v is not None}
 
     ultimoErro: Optional[Exception] = None
@@ -55,10 +97,9 @@ def _get(params: dict[str, Any]) -> dict:
         ),
     )
 
-
-# Tradução de chaves estruturais
-
-_camposLinhaFinanceira = {"slug": "slug", "label": "label", "unidade": "unidade", "valores": "valores", "obs": "obs"}
+_camposLinhaFinanceira = {
+    "slug": "slug", "label": "label", "nivel": "nivel", "unidade": "unidade", "valores": "valores", "obs": "obs",
+}
 
 _camposCompeticaoDesempenho = {
     "brasileirao": "brasileirao",
@@ -82,7 +123,9 @@ def _traduzirTemporada(temporada: dict) -> dict:
 
 
 def _traduzirLinhaFinanceira(linha: dict) -> dict:
-    return {chaveNova: linha.get(chaveOriginal) for chaveOriginal, chaveNova in _camposLinhaFinanceira.items()}
+    traduzida = {chaveNova: linha.get(chaveOriginal) for chaveOriginal, chaveNova in _camposLinhaFinanceira.items()}
+    traduzida["nivel"] = traduzida.get("nivel") or 0
+    return traduzida
 
 
 def _traduzirMovimentacao(mov: dict) -> dict:
@@ -92,9 +135,6 @@ def _traduzirMovimentacao(mov: dict) -> dict:
         "valorMi": mov.get("valor_mi"),
         "tipo": mov.get("tipo"),
     }
-
-
-# Metadados
 
 def health() -> dict:
     return _get({"route": "health"})
@@ -129,9 +169,6 @@ def indicadores(clube: str) -> dict:
         "nota": dados.get("nota"),
     }
 
-
-# Desempenho esportivo
-
 def desempenho(clube: str, ano: Optional[int] = None) -> dict:
     dados = _get({"route": "desempenho", "clube": clube, "ano": ano})
     return {
@@ -141,9 +178,6 @@ def desempenho(clube: str, ano: Optional[int] = None) -> dict:
         "dados": [_traduzirTemporada(t) for t in dados["dados"]],
         "fonte": dados.get("fonte"),
     }
-
-
-# Financeiro
 
 def financeiro(clube: str, ano: Optional[int] = None, indicador: Optional[str] = None) -> dict:
     dados = _get({"route": "financeiro", "clube": clube, "ano": ano, "indicador": indicador})
@@ -193,9 +227,6 @@ def comparativo(indicador: str, ano: Optional[int] = None, clubesFiltro: Optiona
         "serie": dados["serie"],
         "nota": dados.get("nota"),
     }
-
-
-# Transferências
 
 def transferencias(
     clube: str, ano: Optional[int] = None, direcao: Optional[str] = None, tipo: Optional[str] = None

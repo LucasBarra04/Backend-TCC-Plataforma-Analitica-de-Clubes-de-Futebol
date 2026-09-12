@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import corsOrigins
 from routers import desempenho, diagnostico, estatisticas, financeiro, metadados, projecoes, transferencias
@@ -27,18 +30,23 @@ app.add_middleware(
 def handleSheetsApiError(request: Request, exc: SheetsAPIError):
     return JSONResponse(status_code=exc.code, content={"detail": exc.message})
 
+apiPrefix = "/api"
+app.include_router(metadados.router, prefix=apiPrefix)
+app.include_router(desempenho.router, prefix=apiPrefix)
+app.include_router(financeiro.router, prefix=apiPrefix)
+app.include_router(transferencias.router, prefix=apiPrefix)
+app.include_router(diagnostico.router, prefix=apiPrefix)
+app.include_router(projecoes.router, prefix=apiPrefix)
+app.include_router(estatisticas.router, prefix=apiPrefix)
 
-app.include_router(metadados.router)
-app.include_router(desempenho.router)
-app.include_router(financeiro.router)
-app.include_router(transferencias.router)
-app.include_router(diagnostico.router)
-app.include_router(projecoes.router)
-app.include_router(estatisticas.router)
 
-
-@app.get("/", tags=["Metadados"])
-def raiz():
+@app.get(f"{apiPrefix}/", tags=["Metadados"])
+def raizApi():
     return {
-        "nome": "Plataforma Analítica de Clubes de Futebol — API"
+        "nome": "Plataforma Analítica de Clubes de Futebol API",
     }
+
+_frontendDist = Path(__file__).parent / "frontend" / "dist"
+if _frontendDist.exists():
+    app.mount("/", StaticFiles(directory=_frontendDist, html=True), name="frontend")
+
